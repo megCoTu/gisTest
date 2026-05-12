@@ -1,24 +1,25 @@
 <!DOCTYPE html>
 <html>
-  
 <head>
-  <meta charset="utf-8" />
+<meta charset="utf-8" />
+<title>Chicago Crime Map</title>
 
-  <title>Chicago Crime Map</title>
-   <meta name="robots" content="noindex, nofollow">
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
 
-  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
-  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+<style>
+  #map { height: 100vh; }
+  body { margin: 0; }
 
-  <script src="https://unpkg.com/leaflet.heat/dist/leaflet-heat.js"></script>
-  
-
-
-  <style>
-    #map { height: 100vh; }
-    body { margin: 0; }
-   
-  </style>
+  .label {
+    font-size: 11px;
+    color: #333;
+    font-weight: 500;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+</style>
 </head>
 
 <body>
@@ -29,143 +30,162 @@
 // ======================
 // MAP
 // ======================
-
 var map = L.map('map').setView([41.8781, -87.6298], 11);
-
 
 // ======================
 // BASEMAPS
 // ======================
-
 var light = L.tileLayer(
-  'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png',
-  {
-    attribution: '© OpenStreetMap © CARTO'
-  }
-);
+  'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png'
+).addTo(map);
 
 var dark = L.tileLayer(
-  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',
-  {
-    attribution: '© OpenStreetMap © CARTO'
-  }
+  'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png'
 );
 
-// DEFAULT MAP
-light.addTo(map);
+// ======================
+// LAYERS
+// ======================
+var crimeLayer = L.layerGroup().addTo(map);
+var heatLayer = L.layerGroup();
+var labelLayer = L.layerGroup();
 
+// districts always ON
+var districtLayer = L.layerGroup().addTo(map);
 
 // ======================
-// DISTRICT OUTLINES
+// DISTRICTS + LABELS
 // ======================
-
 fetch('./Boundaries_-_Community_Areas_20260510.geojson')
-  .then(res => res.json())
-  .then(data => {
+.then(res => res.json())
+.then(data => {
 
-    L.geoJSON(data, {
-      style: {
-        color: "#666",
-        weight: 0.4,
-        fillOpacity: 0.1
-      }
-    }).addTo(map);
+  // outlines
+  L.geoJSON(data, {
+    style: {
+      color: "#666",
+      weight: 0.4,
+      fillOpacity: .1
+    }
+  }).addTo(districtLayer);
 
+  // labels
+  data.features.forEach(f => {
+
+    var center = L.geoJSON(f).getBounds().getCenter();
+
+    var name =
+      f.properties.community ||
+      f.properties.community_area ||
+      f.properties.area_name ||
+      f.properties.NAME ||
+      "AREA";
+
+    var marker = L.marker(center, {
+      icon: L.divIcon({
+        className: 'label',
+        html: name,
+        iconSize: [120, 20]
+      })
+    });
+
+    labelLayer.addLayer(marker);
   });
 
+});
 
 // ======================
-// LOAD CRIME DATA
+// CRIME DATA + HEATMAP
 // ======================
-
 fetch('./chicago_crime_export.geojson')
-  .then(res => res.json())
-  .then(data => {
+.then(res => res.json())
+.then(data => {
 
-    // ------------------
-    // CRIME POINTS
-    // ------------------
+  // POINTS
+  var points = L.geoJSON(data, {
 
-    var crimeLayer = L.geoJSON(data, {
+    pointToLayer: function(feature, latlng) {
+      return L.circleMarker(latlng, {
+        radius: 4,
+        color: "#2b8cbe",
+        weight: 1,
+        fillOpacity: 0.7
+      });
+    },
 
-      pointToLayer: function(feature, latlng) {
-
-        return L.circleMarker(latlng, {
-
-          radius: 5,
-          color: "#2b8cbe",
-          weight: 1,
-          fillOpacity: 0.6
-
-        });
-
-      },
-
-      onEachFeature: function(feature, layer) {
-
-        layer.bindTooltip(
-          feature.properties.Date,
-          {
-            sticky: true,
-            direction: "top",
-            opacity: 0.9
-          }
-        );
-
-      }
-
-    });
-
-    // SHOW POINTS BY DEFAULT
-    crimeLayer.addTo(map);
-
-
-    // ------------------
-    // HEATMAP
-    // ------------------
-
-    var heatPoints = [];
-
-    data.features.forEach(function(feature) {
-
-      var coords = feature.geometry.coordinates;
-
-      heatPoints.push([
-        coords[1],
-        coords[0],
-        1
-      ]);
-
-    });
-
-    var heatLayer = L.heatLayer(heatPoints, {
-
-      radius: 25,
-      blur: 20,
-      maxZoom: 14
-
-    });
-
-
-    // ======================
-    // LAYER CONTROLS
-    // ======================
-
-    var baseMaps = {
-      "Light": light,
-      "Dark": dark
-    };
-
-    var overlays = {
-      "Crime Points": crimeLayer,
-      "Heatmap": heatLayer
-    };
-
-    L.control.layers(baseMaps, overlays, {
-      collapsed: false
-    }).addTo(map);
+    onEachFeature: function(feature, layer) {
+      layer.bindTooltip(feature.properties.Date, {
+        sticky: true
+      });
+    }
 
   });
+
+  points.addTo(crimeLayer);
+
+  // HEATMAP (FIXED)
+  var heatPoints = data.features.map(f => [
+    f.geometry.coordinates[1],
+    f.geometry.coordinates[0],
+    1
+  ]);
+
+  var heat = L.heatLayer(heatPoints, {
+    radius: 23,
+    blur: 15,
+    maxZoom: 14
+  });
+
+  heatLayer.addLayer(heat);
+
+});
+
+// ======================
+// BASE / OVERLAY CONTROL
+// ======================
+var baseMaps = {
+  "Light": light,
+  "Dark": dark
+};
+
+var overlays = {
+  "Crime Points": crimeLayer,
+  "Heatmap": heatLayer,
+  "District Labels": labelLayer
+};
+
+L.control.layers(baseMaps, overlays, {
+  collapsed: false
+}).addTo(map);
+
+// ======================
+// LABEL ZOOM CONTROL
+// ======================
+var labelsEnabled = true;
+
+map.on('overlayadd', function (e) {
+  if (e.name === "District Labels") {
+    labelsEnabled = true;
+    labelLayer.addTo(map);
+  }
+});
+
+map.on('overlayremove', function (e) {
+  if (e.name === "District Labels") {
+    labelsEnabled = false;
+    map.removeLayer(labelLayer);
+  }
+});
+
+map.on('zoomend', function () {
+  if (!labelsEnabled) return;
+
+  if (map.getZoom() < 10) {
+    map.removeLayer(labelLayer);
+  } else {
+    map.addLayer(labelLayer);
+  }
+});
 
 </script>
 </body>
